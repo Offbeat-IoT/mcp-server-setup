@@ -7,6 +7,8 @@
 // preserved through scripts/pre-deploy.sh, and the Jenkins credentials the
 // jenkins-mcp/slack-mcp services need are bound during rendering and deploy.
 stackRepoCiPipeline(
+    stackMembershipVersion: 'feature/compose-host-stacks',
+    applicationVersionsRef: 'feature/compose-host-stacks',
     buildNode: 'build1',
     sourceRepo: 'Offbeat-IoT/mcp-server-setup',
     runProductionDeploy: false,
