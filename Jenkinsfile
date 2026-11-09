@@ -1,4 +1,4 @@
-@Library('shared-jenkins-pipelines@main') _
+@Library('shared-jenkins-pipelines@feature/jenkinsfile-migration-hooks') _
 
 // Build the MCP server images and deploy the mcp-servers stack to build1 with
 // the shared stack pipeline.
