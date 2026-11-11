@@ -42,7 +42,11 @@ for pair in \
     portainer-production1:portainer-mcp; do
     service="${pair%%:*}"
     image="${pair##*:}"
-    docker service update --force --with-registry-auth \
+    docker service update --detach=false --force --with-registry-auth \
         --image "registry:5000/offbeat-iot/${image}:latest" \
         "mcp-servers_${service}" >/dev/null 2>&1 || true
 done
+
+# Let Swarm finish recording the update specs before the stack deploy issues its
+# own updates; otherwise it can fail with "update out of sequence".
+sleep 15
