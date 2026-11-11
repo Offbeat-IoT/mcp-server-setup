@@ -19,3 +19,30 @@ docker compose -f docker-compose.build.yml build ${BUILD_SERVICES}
 
 echo "Pushing MCP server images"
 docker compose -f docker-compose.build.yml push ${BUILD_SERVICES}
+
+# Swarm was created with --resolve-image never, so a moving :latest tag keeps the
+# digest resolved by the previous deploy. Force each first-party service to pull
+# the image that was just pushed. Missing services (first deploy) are ignored;
+# the stack deploy creates them.
+echo "Refreshing first-party service images"
+for pair in \
+    yahoo-mail-mcp:yahoo-mail-mcp \
+    google-workspace-mcp:google-workspace-mcp \
+    tado-mcp:tado-mcp \
+    signal-mcp:signal-mcp \
+    slack-mcp:slack-mcp \
+    todoist-mcp:todoist-mcp \
+    asus-router-mcp:asus-router-mcp \
+    jenkins-mcp:jenkins-mcp \
+    portainer-build1:portainer-mcp \
+    portainer-build2:portainer-mcp \
+    portainer-monitor:portainer-mcp \
+    portainer-observability1:portainer-mcp \
+    portainer-tools1:portainer-mcp \
+    portainer-production1:portainer-mcp; do
+    service="${pair%%:*}"
+    image="${pair##*:}"
+    docker service update --force --with-registry-auth \
+        --image "registry:5000/offbeat-iot/${image}:latest" \
+        "mcp-servers_${service}" >/dev/null 2>&1 || true
+done
