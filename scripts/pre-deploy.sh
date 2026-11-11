@@ -25,6 +25,7 @@ docker compose -f docker-compose.build.yml push ${BUILD_SERVICES}
 # the image that was just pushed. Missing services (first deploy) are ignored;
 # the stack deploy creates them.
 echo "Refreshing first-party service images"
+SERVICES=""
 for pair in \
     yahoo-mail-mcp:yahoo-mail-mcp \
     google-workspace-mcp:google-workspace-mcp \
@@ -42,11 +43,26 @@ for pair in \
     portainer-production1:portainer-mcp; do
     service="${pair%%:*}"
     image="${pair##*:}"
-    docker service update --detach=false --force --with-registry-auth \
+    SERVICES="${SERVICES} ${service}"
+    # Do not wait for convergence here: a service that cannot start would block
+    # the hook indefinitely. The deploy's readiness check owns rollout failures.
+    docker service update --detach=true --force --with-registry-auth \
         --image "registry:5000/offbeat-iot/${image}:latest" \
         "mcp-servers_${service}" >/dev/null 2>&1 || true
 done
 
-# Let Swarm finish recording the update specs before the stack deploy issues its
-# own updates; otherwise it can fail with "update out of sequence".
-sleep 15
+# Wait (bounded) until Swarm has recorded every update spec, otherwise the stack
+# deploy can fail with "update out of sequence".
+i=0
+while [ "${i}" -lt 24 ]; do
+    busy=0
+    for service in ${SERVICES}; do
+        state="$(docker service inspect "mcp-servers_${service}" --format '{{if .UpdateStatus}}{{.UpdateStatus.State}}{{end}}' 2>/dev/null || true)"
+        if [ "${state}" = "updating" ] || [ "${state}" = "paused" ]; then
+            busy=1
+        fi
+    done
+    [ "${busy}" -eq 0 ] && break
+    sleep 5
+    i=$((i + 1))
+done
