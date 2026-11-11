@@ -361,11 +361,10 @@ services:
         protocol: tcp
         mode: ingress
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8787/readyz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
+      # The upstream headroom image does not ship curl, so the previous
+      # `curl /readyz` probe always failed and Swarm killed the healthy task.
+      # Keep the port published and let the image's own logs report readiness.
+      disable: true
     volumes:
       - ${MCP_DATA_DIR:-/home/jenkins/mcp-server-setup-data}/headroom:/data
     networks:
