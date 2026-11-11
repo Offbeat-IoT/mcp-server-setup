@@ -1,4 +1,4 @@
-﻿version: "3.9"
+version: "3.9"
 
 x-deploy-defaults: &deploy-defaults
   mode: replicated
@@ -361,10 +361,9 @@ services:
         protocol: tcp
         mode: ingress
     healthcheck:
-      # The upstream headroom image does not ship curl, so the previous
-      # `curl /readyz` probe always failed and Swarm killed the healthy task.
-      # Keep the port published and let the image's own logs report readiness.
-      disable: true
+      # The upstream headroom image does not ship curl and its own HEALTHCHECK
+      # fails. Swarm only honours test: ["NONE"], not the Compose-only disable.
+      test: ["NONE"]
     volumes:
       - ${MCP_DATA_DIR:-/home/jenkins/mcp-server-setup-data}/headroom:/data
     networks:
