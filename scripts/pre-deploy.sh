@@ -21,10 +21,11 @@ echo "Pushing MCP server images"
 docker compose -f docker-compose.build.yml push ${BUILD_SERVICES}
 
 # Swarm deploys with --resolve-image never, so a moving :latest tag keeps the
-# digest resolved by the previous deploy. Drop the local tags so the stack
-# deploy must pull the image that was just pushed. Removing a tag does not
-# affect running containers.
-echo "Dropping local image tags so the deploy pulls the pushed images"
+# digest resolved by the previous deploy. Publish an immutable per-build tag and
+# point the rendered stack at it: the spec then changes and Swarm pulls and
+# rolls out the images that were just built.
+TAG="ci-$(date +%Y%m%d%H%M%S)"
+echo "Publishing immutable image tag ${TAG}"
 for image in \
     yahoo-mail-mcp \
     google-workspace-mcp \
@@ -35,5 +36,11 @@ for image in \
     asus-router-mcp \
     jenkins-mcp \
     portainer-mcp; do
-    docker image rm "registry:5000/offbeat-iot/${image}:latest" >/dev/null 2>&1 || true
+    docker tag "registry:5000/offbeat-iot/${image}:latest" "registry:5000/offbeat-iot/${image}:${TAG}"
+    docker push "registry:5000/offbeat-iot/${image}:${TAG}"
 done
+
+if [ -f rendered-stack.yaml ]; then
+    echo "Retagging first-party images in rendered-stack.yaml to ${TAG}"
+    sed -i -E "s#(registry:5000/offbeat-iot/[a-z0-9-]+):latest#\1:${TAG}#g" rendered-stack.yaml
+fi
