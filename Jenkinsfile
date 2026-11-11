@@ -1,4 +1,4 @@
-@Library('shared-jenkins-pipelines@feature/jenkinsfile-migration-hooks') _
+@Library('shared-jenkins-pipelines@main') _
 
 // Build the MCP server images and deploy the mcp-servers stack to build1 with
 // the shared stack pipeline.
@@ -7,8 +7,8 @@
 // preserved through scripts/pre-deploy.sh, and the Jenkins credentials the
 // jenkins-mcp/slack-mcp services need are bound during rendering and deploy.
 stackRepoCiPipeline(
-    stackMembershipVersion: 'feature/compose-host-stacks',
-    applicationVersionsRef: 'feature/compose-host-stacks',
+    stackMembershipVersion: 'main',
+    applicationVersionsRef: 'main',
     buildNode: 'build1',
     sourceRepo: 'Offbeat-IoT/mcp-server-setup',
     runProductionDeploy: false,
