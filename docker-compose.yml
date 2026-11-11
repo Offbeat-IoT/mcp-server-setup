@@ -187,7 +187,7 @@ services:
       <<: *deploy-defaults
     image: registry:5000/offbeat-iot/asus-router-mcp:latest
     environment:
-      - ROUTER_HOST=${ROUTER_HOST}
+      - ROUTER_HOST=${ROUTER_HOST:-192.168.1.2}
       - ROUTER_HOSTS=${ROUTER_HOSTS:-}
       - ROUTER_PROFILE=${ROUTER_PROFILE:-default}
       - ROUTER_USERNAME=${ROUTER_USERNAME:-admin}
