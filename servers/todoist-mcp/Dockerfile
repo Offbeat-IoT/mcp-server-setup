@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir todoist-mcp-server
+RUN pip install --no-cache-dir "mcp[cli]<2" todoist-mcp-server
 
 ENV TODOIST_API_TOKEN=${TODOIST_API_TOKEN}
 ENV MCP_HOST=0.0.0.0

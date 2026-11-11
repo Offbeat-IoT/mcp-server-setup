@@ -1,8 +1,46 @@
-version: "3.9"
-
 services:
+  # OpenCode CLI (MCP Client)
+  opencode:
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - JENKINS_URL=${JENKINS_URL:-}
+      - JENKINS_USERNAME=${JENKINS_USERNAME:-}
+      - JENKINS_API_TOKEN=${JENKINS_API_TOKEN:-}
+      - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
+      - YAHOO_EMAIL=${YAHOO_EMAIL:-}
+      - YAHOO_APP_PASSWORD=${YAHOO_APP_PASSWORD:-}
+      - SENTINEL_WEBHOOK_URL=${SENTINEL_WEBHOOK_URL:-}
+    build:
+      context: ./opencode
+      dockerfile: Dockerfile
+    container_name: opencode
+    volumes:
+      - ./opencode/config:/root/.config/opencode
+      - ./opencode/data:/root/.local/share/opencode
+      - ./opencode/codex:/root/.codex
+      - ./docker-compose.yml:/app/docker-compose.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stdin_open: true
+    tty: true
+    profiles:
+      - opencode
+    networks:
+      - mcp-network
+
+  # Yahoo Mail MCP Server (SSE via custom wrapper around mcp-mail-server)
   yahoo-mail-mcp:
     image: registry:5000/offbeat-iot/yahoo-mail-mcp:latest
+    build:
+      context: ./servers/yahoo-mail-sse
+      dockerfile: Dockerfile
+    container_name: yahoo-mail-mcp
     environment:
       - IMAP_HOST=imap.mail.yahoo.com
       - IMAP_PORT=993
@@ -13,15 +51,14 @@ services:
       - EMAIL_USER=${YAHOO_EMAIL}
       - EMAIL_PASS=${YAHOO_APP_PASSWORD}
     ports:
-      - target: 3101
-        published: 3101
-        protocol: tcp
-        mode: ingress
+      - "3101:3101"
     networks:
       - mcp-network
 
+  # Alertmanager MCP Server (SSE mode)
   alertmanager-mcp:
     image: ghcr.io/ntk148v/alertmanager-mcp-server:1.1.0
+    container_name: alertmanager-mcp
     environment:
       - ALERTMANAGER_URL=${ALERTMANAGER_URL}
       - ALERTMANAGER_USERNAME=${ALERTMANAGER_USERNAME:-}
@@ -30,17 +67,26 @@ services:
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8001
     ports:
-      - target: 8001
-        published: 8001
-        protocol: tcp
-        mode: ingress
+      - "8001:8001"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python3 -c "import sys,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8001/sse', timeout=2); sys.exit(0 if r.status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     extra_hosts:
       - "observability1:192.168.1.80"
     networks:
       - mcp-network
 
+  # Google Workspace MCP Server (SSE mode)
   google-workspace-mcp:
     image: registry:5000/offbeat-iot/google-workspace-mcp:latest
+    build:
+      context: ./servers/mcp-google-workspace
+      dockerfile: Dockerfile
     command:
       - node
       - dist/server.js
@@ -54,47 +100,52 @@ services:
       - TRANSPORT_MODE=sse
       - PORT=3103
     ports:
-      - target: 3103
-        published: 3103
-        protocol: tcp
-        mode: ingress
+      - "3103:3103"
     volumes:
-      - ${MCP_DATA_DIR:-/home/jenkins/mcp-server-setup-data}/google-workspace:/data/google-workspace
+      - ${MCP_DATA_DIR:-./data}/google-workspace:/data/google-workspace
     networks:
       - mcp-network
 
+  # Tado MCP Server (SSE mode)
   tado-mcp:
     image: registry:5000/offbeat-iot/tado-mcp:latest
+    container_name: tado-mcp
+    build:
+      context: ./servers/tado-mcp
+      dockerfile: Dockerfile
     environment:
       - SERVER_PORT=3102
       - TADO_TOKENS_FILE=/data/tokens.json
     ports:
-      - target: 3102
-        published: 3102
-        protocol: tcp
-        mode: ingress
+      - "3102:3102"
     volumes:
-      - ${MCP_DATA_DIR:-/home/jenkins/mcp-server-setup-data}/tado:/data
+      - ${MCP_DATA_DIR:-./data}/tado:/data
     networks:
       - mcp-network
 
+  # Signal CLI REST API backend
   signal-proxy:
     image: bbernhard/signal-cli-rest-api:latest
+    container_name: signal-proxy
     environment:
       - MODE=${SIGNAL_CLI_MODE:-json-rpc-native}
       - RECEIVE_WEBHOOK_URL=${SIGNAL_RECEIVE_WEBHOOK_URL:-http://build1:18442/api/signal/webhook}
     volumes:
-      - ${MCP_DATA_DIR:-/home/jenkins/mcp-server-setup-data}/signal-cli:/home/.local/share/signal-cli
+      - ${MCP_DATA_DIR:-./data}/signal-cli:/home/.local/share/signal-cli
     ports:
-      - target: 8080
-        published: 8080
-        protocol: tcp
-        mode: ingress
+      - "8080:8080"
     networks:
       - mcp-network
 
+  # Signal MCP Server (SSE mode)
   signal-mcp:
     image: registry:5000/offbeat-iot/signal-mcp:latest
+    container_name: signal-mcp
+    build:
+      context: ./servers/signal-mcp
+      dockerfile: Dockerfile
+    depends_on:
+      - signal-proxy
     environment:
       - MCP_TRANSPORT=sse
       - MCP_HOST=0.0.0.0
@@ -106,15 +157,17 @@ services:
       - SIGNAL_POLL_INTERVAL_SECONDS=${SIGNAL_POLL_INTERVAL_SECONDS:-10}
       - SIGNAL_POLL_TIMEOUT_SECONDS=${SIGNAL_POLL_TIMEOUT_SECONDS:-5}
     ports:
-      - target: 3107
-        published: 3107
-        protocol: tcp
-        mode: ingress
+      - "3107:3107"
     networks:
       - mcp-network
 
+  # Slack MCP Server
   slack-mcp:
     image: registry:5000/offbeat-iot/slack-mcp:latest
+    container_name: slack-mcp
+    build:
+      context: ./servers/slack-mcp
+      dockerfile: Dockerfile
     environment:
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - SLACK_DEFAULT_REPLY_TIMEOUT_SECONDS=${SLACK_DEFAULT_REPLY_TIMEOUT_SECONDS:-300}
@@ -122,15 +175,17 @@ services:
       - MCP_HOST=0.0.0.0
       - MCP_PORT=3108
     ports:
-      - target: 3108
-        published: 3108
-        protocol: tcp
-        mode: ingress
+      - "3108:3108"
     networks:
       - mcp-network
 
+  # Todoist MCP Server
   todoist-mcp:
     image: registry:5000/offbeat-iot/todoist-mcp:latest
+    container_name: todoist-mcp
+    build:
+      context: ./servers/todoist-mcp
+      dockerfile: Dockerfile
     command:
       - python
       - -c
@@ -138,15 +193,17 @@ services:
     environment:
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN}
     ports:
-      - target: 3104
-        published: 3104
-        protocol: tcp
-        mode: ingress
+      - "3104:3104"
     networks:
       - mcp-network
 
+  # ASUS Router MCP Server
   asus-router-mcp:
     image: registry:5000/offbeat-iot/asus-router-mcp:latest
+    container_name: asus-router-mcp
+    build:
+      context: ./servers/asus-router-mcp
+      dockerfile: Dockerfile
     environment:
       - ROUTER_HOST=${ROUTER_HOST}
       - ROUTER_HOSTS=${ROUTER_HOSTS:-}
@@ -158,15 +215,32 @@ services:
       - MCP_HOST=0.0.0.0
       - MCP_PORT=3105
     ports:
-      - target: 3105
-        published: 3105
-        protocol: tcp
-        mode: ingress
+      - "3105:3105"
     networks:
       - mcp-network
 
+  asus-router-mcp-secondary:
+    image: registry:5000/offbeat-iot/asus-router-mcp:latest
+    container_name: asus-router-mcp-secondary
+    profiles: ["multi-asus"]
+    environment:
+      - ROUTER_HOST=${ROUTER_HOST_SECONDARY}
+      - ROUTER_USERNAME=${ROUTER_USERNAME_SECONDARY:-admin}
+      - ROUTER_PASSWORD=${ROUTER_PASSWORD_SECONDARY}
+      - USE_SSL=${USE_SSL_SECONDARY:-true}
+      - TRANSPORT_MODE=sse
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=3205
+      - PORT=3205
+    ports:
+      - "3205:3205"
+    networks:
+      - mcp-network
+
+  # Playwright MCP Server
   playwright-mcp:
     image: mcr.microsoft.com/playwright/mcp:latest
+    container_name: playwright-mcp
     command:
       - --host
       - 0.0.0.0
@@ -178,43 +252,25 @@ services:
       - PLAYWRIGHT_MCP_HOST=0.0.0.0
       - PLAYWRIGHT_MCP_PORT=3106
     ports:
-      - target: 3106
-        published: 3106
-        protocol: tcp
-        mode: ingress
+      - "3106:3106"
     volumes:
-      - ${MCP_DATA_DIR:-/home/jenkins/mcp-server-setup-data}/playwright:/home/user
+      - ${MCP_DATA_DIR:-./data}/playwright:/home/user
     networks:
       - mcp-network
 
-  jenkins-mcp:
-    image: registry:5000/offbeat-iot/jenkins-mcp:latest
-    environment:
-      - JENKINS_URL=${JENKINS_URL}
-      - JENKINS_USERNAME=${JENKINS_USERNAME}
-      - JENKINS_API_TOKEN=${JENKINS_API_TOKEN}
-      - MCP_PORT=3117
-    ports:
-      - target: 3117
-        published: 3117
-        protocol: tcp
-        mode: ingress
-    extra_hosts:
-      - "monitor:192.168.1.60"
-    networks:
-      - mcp-network
-
+  # Portainer MCP Servers (FastMCP SSE wrapper)
   portainer-build1:
     image: registry:5000/offbeat-iot/portainer-mcp:latest
+    build:
+      context: ./servers/portainer-mcp
+      dockerfile: Dockerfile
+    container_name: portainer-build1
     environment:
       - PORTAINER_BASE_URL=http://build1.home:6500
       - PORTAINER_TOKEN=${PORTAINER_BUILD1_TOKEN}
       - MCP_PORT=3111
     ports:
-      - target: 3111
-        published: 3111
-        protocol: tcp
-        mode: ingress
+      - "3111:3111"
     extra_hosts:
       - "build1.home:192.168.1.10"
     networks:
@@ -222,15 +278,13 @@ services:
 
   portainer-build2:
     image: registry:5000/offbeat-iot/portainer-mcp:latest
+    container_name: portainer-build2
     environment:
       - PORTAINER_BASE_URL=http://build2.home:6500
       - PORTAINER_TOKEN=${PORTAINER_BUILD2_TOKEN}
       - MCP_PORT=3112
     ports:
-      - target: 3112
-        published: 3112
-        protocol: tcp
-        mode: ingress
+      - "3112:3112"
     extra_hosts:
       - "build2.home:192.168.1.11"
     networks:
@@ -238,71 +292,80 @@ services:
 
   portainer-monitor:
     image: registry:5000/offbeat-iot/portainer-mcp:latest
+    container_name: portainer-monitor
     environment:
       - PORTAINER_BASE_URL=http://192.168.1.60:6500
       - PORTAINER_TOKEN=${PORTAINER_MONITOR_TOKEN}
       - MCP_PORT=3113
     ports:
-      - target: 3113
-        published: 3113
-        protocol: tcp
-        mode: ingress
+      - "3113:3113"
     networks:
       - mcp-network
 
   portainer-observability1:
     image: registry:5000/offbeat-iot/portainer-mcp:latest
+    container_name: portainer-observability1
     environment:
       - PORTAINER_BASE_URL=http://192.168.1.80:6500
       - PORTAINER_TOKEN=${PORTAINER_OBSERVABILITY1_TOKEN}
       - MCP_PORT=3114
     ports:
-      - target: 3114
-        published: 3114
-        protocol: tcp
-        mode: ingress
+      - "3114:3114"
     networks:
       - mcp-network
 
   portainer-tools1:
     image: registry:5000/offbeat-iot/portainer-mcp:latest
+    container_name: portainer-tools1
     environment:
       - PORTAINER_BASE_URL=http://192.168.1.17:6500
       - PORTAINER_TOKEN=${PORTAINER_TOOLS1_TOKEN}
       - MCP_PORT=3115
     ports:
-      - target: 3115
-        published: 3115
-        protocol: tcp
-        mode: ingress
+      - "3115:3115"
     networks:
       - mcp-network
 
   portainer-production1:
     image: registry:5000/offbeat-iot/portainer-mcp:latest
+    container_name: portainer-production1
     environment:
       - PORTAINER_BASE_URL=http://192.168.1.85:6500
       - PORTAINER_TOKEN=${PORTAINER_PRODUCTION1_TOKEN}
       - MCP_PORT=3116
     ports:
-      - target: 3116
-        published: 3116
-        protocol: tcp
-        mode: ingress
+      - "3116:3116"
     networks:
       - mcp-network
 
+  # Jenkins MCP Server (FastMCP SSE wrapper, bypasses Jenkins MCP plugin)
+  jenkins-mcp:
+    image: registry:5000/offbeat-iot/jenkins-mcp:latest
+    build:
+      context: ./servers/jenkins-mcp
+      dockerfile: Dockerfile
+    container_name: jenkins-mcp
+    environment:
+      - JENKINS_URL=${JENKINS_URL}
+      - JENKINS_USERNAME=${JENKINS_USERNAME}
+      - JENKINS_API_TOKEN=${JENKINS_API_TOKEN}
+      - MCP_PORT=3117
+    ports:
+      - "3117:3117"
+    networks:
+      - mcp-network
+
+  # Headroom Proxy - context compression for LLM calls (60-95% fewer tokens)
+  # https://github.com/chopratejas/headroom
   headroom-proxy:
     image: ghcr.io/chopratejas/headroom:latest
+    container_name: headroom-proxy
     environment:
       - HEADROOM_HOST=0.0.0.0
       # Point at your LLM provider. Defaults to OpenAI.
       # - OPENAI_TARGET_API_URL=${HEADROOM_TARGET_API_URL:-}
     ports:
-      - target: 8787
-        published: 8787
-        protocol: tcp
-        mode: ingress
+      - "8787:8787"
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8787/readyz"]
       interval: 30s
@@ -310,11 +373,14 @@ services:
       retries: 3
       start_period: 20s
     volumes:
-      - ${MCP_DATA_DIR:-/home/jenkins/mcp-server-setup-data}/headroom:/data
+      - headroom_data:/data
     networks:
       - mcp-network
 
+volumes:
+  headroom_data:
+
 networks:
   mcp-network:
-    name: sentinel_sentinel-swarm-network
+    name: sentinel_sentinel-network
     external: true
